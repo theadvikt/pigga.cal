@@ -8,12 +8,11 @@
 //
 // The owner key lives only in process.env.OWNER_KEY. It is never logged or returned.
 
-import { put, list, del } from '@vercel/blob';
+import { readJson, writeJson } from '../lib/store.js';
 import { createHash, timingSafeEqual, randomUUID } from 'node:crypto';
 import { broadcast } from '../lib/push.js';
 
 const PREFIX = 'pigga-calendar/v2-';
-const KEEP_VERSIONS = 5;
 const HOUR = 3600 * 1000;
 const DAY_MAX = 2;
 const MAX_EVENTS = 1000;
@@ -87,12 +86,7 @@ function networkId(req) {
 }
 
 async function readCurrent() {
-  const { blobs } = await list({ prefix: PREFIX, limit: 100 });
-  blobs.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
-  if (!blobs.length) return { events: [], birthdays: [], updatedAt: null, blobs };
-  const r = await fetch(blobs[0].url, { cache: 'no-store' });
-  if (!r.ok) throw new Error(`blob read ${r.status}`);
-  const data = await r.json();
+  const { data, blobs } = await readJson(PREFIX, () => ({ events: [], birthdays: [] }));
   return {
     events: Array.isArray(data.events) ? data.events : [],
     birthdays: Array.isArray(data.birthdays) ? data.birthdays : [],
@@ -103,11 +97,7 @@ async function readCurrent() {
 
 async function write(cur, events, birthdays) {
   const updatedAt = new Date().toISOString();
-  await put(`${PREFIX}${Date.now()}.json`, JSON.stringify({ events, birthdays, updatedAt }), {
-    access: 'public', addRandomSuffix: true, contentType: 'application/json', cacheControlMaxAge: 60,
-  });
-  const stale = cur.blobs.slice(KEEP_VERSIONS - 1).map((b) => b.url);
-  if (stale.length) { try { await del(stale); } catch { /* best effort */ } }
+  await writeJson(PREFIX, { events, birthdays, updatedAt }, cur.blobs);
   return updatedAt;
 }
 
